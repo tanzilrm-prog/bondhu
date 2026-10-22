@@ -38,7 +38,7 @@ function rmUser(id){D.posts.filter(p=>p.uid==id).forEach(unl);unf((D.users.find(
  D.msgs=D.msgs.filter(x=>x.a!=id&&x.b!=id);D.mt=D.mt.filter(t=>t.a!=id&&t.b!=id);D.bl=D.bl.filter(x=>x.by!=id&&x.t!=id);
  D.nt=D.nt.filter(n=>n.to!=id&&n.f!=id);D.rp=D.rp.filter(r=>r.by!=id&&!(r.type=='user'&&r.tid==id));
  D.pf=D.pf.filter(x=>x.u!=id);D.ps=D.ps.filter(x=>x.u!=id);
- for(const k in D.tok)if(D.tok[k]==id)delete D.tok[k];
+ for(const k in D.tok)if(D.tok[k]==id)delete D.tok[k];OTP.delete(id);
  io.in('u'+id).disconnectSockets(true);save();io.emit('sync')}
 function rmPost(p){unl(p);D.posts=D.posts.filter(x=>x!==p);D.rp=D.rp.filter(r=>!(r.type=='post'&&r.tid==p.id));save();io.emit('sync')}
 
@@ -48,7 +48,7 @@ app.use('/uploads',express.static(UP));
 const auth=(q,r,n)=>{const id=D.tok[(q.headers.authorization||'').slice(7)],u=D.users.find(u=>u.id==id);
  if(!u||u.ban)return r.status(401).json({e:'Login koro'});q.me=id;q.u=u;n()};
 const adm=(q,r,n)=>auth(q,r,()=>q.u.admin?n():r.status(403).json({e:'Admin na'}));
-const pub=u=>({id:u.id,name:u.name,pic:u.pic||null});
+const pub=u=>({id:u.id,name:u.name,pic:u.pic||null,ver:!!u.vf});
 function login(u,r){const tk=crypto.randomBytes(24).toString('hex');D.tok[tk]=u.id;save();r.json({token:tk})}
 
 app.post('/api/signup',(q,r)=>{const n=String(q.body.name||'').trim().slice(0,30),p=String(q.body.pw||'');
@@ -72,7 +72,7 @@ app.get('/api/state',auth,(q,r)=>{const m=q.me,A=q.u.admin;
  fr:D.fr.filter(f=>f.includes(m)),rq:D.rq.filter(x=>x.from==m||x.to==m),
  msgs:D.msgs.filter(x=>(x.a==m||x.b==m)&&!blocked(x.a,x.b)).slice(-500),
  bl:D.bl.filter(x=>x.by==m).map(x=>x.t),mt:D.mt.filter(t=>t.a==m||t.b==m),
- nt:D.nt.filter(n=>n.to==m&&!blocked(m,n.f)).slice(-40).reverse(),online:[...on.keys()]})});
+ nt:D.nt.filter(n=>n.to==m&&!blocked(m,n.f)).slice(-40).reverse(),online:[...on.keys()],my:{em:q.u.em||'',ph:q.u.ph||''},vc:{em:mailOn()||devOtp(),ph:smsOn()||devOtp()}})});
 
 app.post('/api/post',auth,(q,r)=>{const text=String(q.body.text||'').slice(0,2000),
  img=typeof q.body.img=='string'&&q.body.img.startsWith('data:image/')?q.body.img:null,
@@ -141,6 +141,60 @@ app.post('/api/nt/read',auth,(q,r)=>{D.nt.forEach(n=>{if(n.to==q.me)n.r=1});save
 app.post('/api/delete-account',auth,(q,r)=>{if(q.u.admin)return r.status(400).json({e:'Admin account eikhan theke delete hobe na'});
  if(q.u.h!=hash(String(q.body.pw||''),q.u.salt))return r.status(400).json({e:'Password vul'});rmUser(q.me);r.json({ok:1})});
 
+
+/* ---- Tools: name, password, OTP verify ---- */
+const lim={};const hit=(k,n,ms)=>{const t=Date.now(),a=(lim[k]||[]).filter(x=>t-x<ms);if(a.length>=n){lim[k]=a;return false}a.push(t);lim[k]=a;return true};
+setInterval(()=>{const t=Date.now();for(const k in lim){lim[k]=lim[k].filter(x=>t-x<36e5);if(!lim[k].length)delete lim[k]}for(const [k,o] of OTP)if(t>o.exp)OTP.delete(k)},6e5).unref();
+app.post('/api/profile/name',auth,(q,r)=>{const n=String(q.body.name||'').trim().slice(0,30);
+ if(!n)return r.status(400).json({e:'Naam dao'});
+ if(ADM&&n.toLowerCase()==ADM&&!q.u.admin)return r.status(400).json({e:'Ei naam reserved'});
+ if(D.users.some(u=>u.id!=q.me&&u.name.toLowerCase()==n.toLowerCase()))return r.status(400).json({e:'Ei naam ache'});
+ q.u.name=n;save();io.emit('sync');r.json({ok:1})});
+app.post('/api/profile/password',auth,(q,r)=>{const o=String(q.body.old||''),p=String(q.body.pw||'');
+ if(!hit('pw'+q.me,5,6e5))return r.status(429).json({e:'Onek bar chesta hoyeche, kichukkhon pore try koro'});
+ if(q.u.h!=hash(o,q.u.salt))return r.status(400).json({e:'Aager password vul'});
+ if(p.length<4)return r.status(400).json({e:'Notun password minimum 4 character'});
+ if(p==o)return r.status(400).json({e:'Notun password aager tar moto na'});
+ const salt=crypto.randomBytes(8).toString('hex'),cur=(q.headers.authorization||'').slice(7);q.u.salt=salt;q.u.h=hash(p,salt);
+ for(const k in D.tok)if(D.tok[k]==q.me&&k!=cur)delete D.tok[k];
+ io.in('u'+q.me).fetchSockets().then(l=>l.filter(x=>x.handshake.auth.token!=cur).forEach(x=>x.disconnect(true))).catch(()=>{});
+ save();r.json({ok:1})});
+
+const OTP=new Map();
+const mailOn=()=>!!((process.env.BREVO_API_KEY||process.env.RESEND_API_KEY)&&process.env.MAIL_FROM),smsOn=()=>!!(process.env.TWILIO_SID&&process.env.TWILIO_TOKEN&&process.env.TWILIO_FROM),devOtp=()=>process.env.OTP_DEV=='1';
+const emailOk=e=>e.length<=120&&/^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/.test(e);
+const normPh=x=>{let s=String(x||'').replace(/[\s\-()]/g,'');if(/^01\d{9}$/.test(s))s='+88'+s;else if(/^8801\d{9}$/.test(s))s='+'+s;else if(/^00/.test(s))s='+'+s.slice(2);return/^\+[1-9]\d{7,14}$/.test(s)?s:null};
+async function sendOtp(type,to,code){const msg='Bondhu verification code: '+code+' (10 minute valid. Eta kauke dio na)',sig=AbortSignal.timeout(15000);
+ if(type=='email'){const f=process.env.MAIL_FROM,sub='Bondhu verification code';
+  if(process.env.BREVO_API_KEY){const m=f.match(/^(.*)<(.+)>\s*$/),sender=m?{name:m[1].trim()||'Bondhu',email:m[2].trim()}:{name:'Bondhu',email:f.trim()};
+   const rs=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':process.env.BREVO_API_KEY,'Content-Type':'application/json',accept:'application/json'},body:JSON.stringify({sender,to:[{email:to}],subject:sub,textContent:msg}),signal:sig});
+   if(!rs.ok)throw new Error('Brevo HTTP '+rs.status);return}
+  const rs=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+process.env.RESEND_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({from:f,to:[to],subject:sub,text:msg}),signal:sig});
+  if(!rs.ok)throw new Error('Resend HTTP '+rs.status);return}
+ const sid=process.env.TWILIO_SID,fr=process.env.TWILIO_FROM,b=new URLSearchParams({To:to,Body:msg});b.set(/^MG/.test(fr)?'MessagingServiceSid':'From',fr);
+ const rs=await fetch('https://api.twilio.com/2010-04-01/Accounts/'+encodeURIComponent(sid)+'/Messages.json',{method:'POST',headers:{Authorization:'Basic '+Buffer.from(sid+':'+process.env.TWILIO_TOKEN).toString('base64'),'Content-Type':'application/x-www-form-urlencoded'},body:b,signal:sig});
+ if(!rs.ok)throw new Error('Twilio HTTP '+rs.status)}
+app.post('/api/verify/send',auth,async(q,r)=>{const type=q.body.type=='phone'?'phone':'email',raw=String(q.body.value||'').trim(),f=type=='email'?'em':'ph',nm=type=='email'?'Email':'Phone number';
+ const val=type=='email'?(emailOk(raw.toLowerCase())?raw.toLowerCase():null):normPh(raw);
+ if(!val)return r.status(400).json({e:type=='email'?'Email thik na':'Phone number thik na (01XXXXXXXXX ba +countrycode)'});
+ const can=type=='email'?mailOn():smsOn();if(!can&&!devOtp())return r.status(503).json({e:'Ei server e '+(type=='email'?'email':'SMS')+' OTP service chalu nai. Admin ke setup korte bolo.'});
+ if(q.u[f]==val)return r.status(400).json({e:nm+' already verified'});
+ if(D.users.some(u=>u.id!=q.me&&u[f]==val))return r.status(400).json({e:'Ei '+nm+' onno account e verified ache'});
+ const o=OTP.get(q.me),w=o?Math.ceil((6e4-(Date.now()-o.sent))/1000):0;if(w>0)return r.status(429).json({e:'Aro '+w+' second pore abar pathao',wait:w});
+ if(!hit('os'+q.me,5,36e5)||!hit('oc'+type+val,3,36e5))return r.status(429).json({e:'Onek bar OTP chawa hoyeche, 1 ghonta pore try koro'});
+ const code=String(crypto.randomInt(0,1e6)).padStart(6,'0'),salt=crypto.randomBytes(8).toString('hex');
+ try{if(can)await sendOtp(type,val,code);else console.log('[OTP_DEV]',type,val,code)}catch(e){console.log('OTP send fail:',String(e.message||e).slice(0,120));return r.status(502).json({e:'OTP pathano jayni. Admin ke provider/key check korte bolo.'})}
+ OTP.set(q.me,{type,val,salt,h:hash(code,salt),exp:Date.now()+6e5,tries:0,sent:Date.now()});r.json({ok:1,wait:60})});
+app.post('/api/verify/confirm',auth,(q,r)=>{const o=OTP.get(q.me),c=String(q.body.code||'').trim();
+ if(!o||Date.now()>o.exp){OTP.delete(q.me);return r.status(400).json({e:'OTP nai ba expire hoye geche, abar pathao'})}
+ if(!/^\d{6}$/.test(c))return r.status(400).json({e:'6 digit er code dao'});
+ if(!crypto.timingSafeEqual(Buffer.from(hash(c,o.salt)),Buffer.from(o.h))){o.tries++;if(o.tries>=5){OTP.delete(q.me);return r.status(429).json({e:'Onek bar vul. Notun OTP nao'})}return r.status(400).json({e:'OTP vul ('+(5-o.tries)+' bar baki)'})}
+ const f=o.type=='email'?'em':'ph';
+ if(D.users.some(u=>u.id!=q.me&&u[f]==o.val)){OTP.delete(q.me);return r.status(400).json({e:'Ei '+(f=='em'?'email':'number')+' onno account e verified hoye geche'})}
+ q.u[f]=o.val;q.u.vf=1;OTP.delete(q.me);save();io.emit('sync');r.json({ok:1})});
+app.post('/api/verify/remove',auth,(q,r)=>{if(q.u.h!=hash(String(q.body.pw||''),q.u.salt))return r.status(400).json({e:'Password vul'});
+ delete q.u[q.body.type=='phone'?'ph':'em'];if(q.u.em||q.u.ph)q.u.vf=1;else delete q.u.vf;save();io.emit('sync');r.json({ok:1})});
+
 /* ---- ICE (call relay), push, pages ---- */
 let iceC=null,iceErr='';
 async function ice(){const base=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
@@ -180,7 +234,7 @@ const pullAll=async()=>{for(const g of D.pages.slice())await pull(g)};
 setTimeout(pullAll,5000);setInterval(pullAll,20*60*1000);
 
 app.get('/api/admin',adm,async(q,r)=>{await ice();const nm=id=>(D.users.find(u=>u.id==id)||D.pages.find(g=>g.id==id)||{name:'?'}).name;
- r.json({max:MAX(),turn:!!((process.env.METERED_DOMAIN&&process.env.METERED_API_KEY)||process.env.TURN_URLS),push:!!wp,turnGot:!!(iceC&&iceC.v.length>1),iceErr,pages:D.pages.map(g=>({id:g.id,name:g.name,rss:g.rss||'',ver:!!g.ver,ok:g.ok||0,err:g.err||''})),posts:D.posts.filter(p=>!p.del).length,
+ r.json({max:MAX(),turn:!!((process.env.METERED_DOMAIN&&process.env.METERED_API_KEY)||process.env.TURN_URLS),push:!!wp,mail:mailOn(),sms:smsOn(),turnGot:!!(iceC&&iceC.v.length>1),iceErr,pages:D.pages.map(g=>({id:g.id,name:g.name,rss:g.rss||'',ver:!!g.ver,ok:g.ok||0,err:g.err||''})),posts:D.posts.filter(p=>!p.del).length,
  users:D.users.map(u=>({id:u.id,name:u.name,admin:!!u.admin,ban:!!u.ban,posts:D.posts.filter(p=>p.uid==u.id&&!p.del).length})),
  reports:D.rp.map(x=>{const p=x.type=='post'?D.posts.find(p=>p.id==x.tid):null;if(x.type=='post'&&!p)return null;const au=p?p.uid:x.tid;
   return{id:x.id,type:x.type,by:nm(x.by),target:nm(au),uid:au,tid:x.tid,reason:x.reason,snip:p?(p.text||'(photo/video)').slice(0,120):''}}).filter(Boolean)})});
