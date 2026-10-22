@@ -142,13 +142,13 @@ app.post('/api/delete-account',auth,(q,r)=>{if(q.u.admin)return r.status(400).js
  if(q.u.h!=hash(String(q.body.pw||''),q.u.salt))return r.status(400).json({e:'Password vul'});rmUser(q.me);r.json({ok:1})});
 
 /* ---- ICE (call relay), push, pages ---- */
-let iceC=null;
+let iceC=null,iceErr='';
 async function ice(){const base=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
  if(iceC&&Date.now()-iceC.t<18e5)return iceC.v;let v=base;
  try{if(process.env.METERED_DOMAIN&&process.env.METERED_API_KEY){
    const h=process.env.METERED_DOMAIN.replace(/^https?:\/\//,'').replace(/\/.*/,''),rs=await fetch('https://'+h+'/api/v1/turn/credentials?apiKey='+encodeURIComponent(process.env.METERED_API_KEY),{signal:AbortSignal.timeout(8000)});
-   if(rs.ok){const j=await rs.json();if(Array.isArray(j)&&j.length)v=base.concat(j)}}
-  else if(process.env.TURN_URLS)v=base.concat({urls:process.env.TURN_URLS.split(',').map(x=>x.trim()).filter(Boolean),username:process.env.TURN_USER||'',credential:process.env.TURN_PASS||''})}catch(e){}
+   if(rs.ok){const j=await rs.json();if(Array.isArray(j)&&j.length){v=base.concat(j);iceErr=''}else iceErr='Metered khali list dilo'}else iceErr='Metered HTTP '+rs.status+' (key/domain check koro)'}
+  else if(process.env.TURN_URLS)v=base.concat({urls:process.env.TURN_URLS.split(',').map(x=>x.trim()).filter(Boolean),username:process.env.TURN_USER||'',credential:process.env.TURN_PASS||''})}catch(e){iceErr=String(e.message||e).slice(0,100)}
  iceC={t:v===base?Date.now()-17e5:Date.now(),v};return v}
 app.get('/api/ice',auth,async(q,r)=>{const v=await ice();r.json({s:v,turn:v.length>1})});
 app.get('/api/push/key',auth,(q,r)=>r.json({k:wp?VP.pub:null}));
@@ -179,8 +179,8 @@ async function pull(g){if(!g.rss)return;
 const pullAll=async()=>{for(const g of D.pages.slice())await pull(g)};
 setTimeout(pullAll,5000);setInterval(pullAll,20*60*1000);
 
-app.get('/api/admin',adm,(q,r)=>{const nm=id=>(D.users.find(u=>u.id==id)||D.pages.find(g=>g.id==id)||{name:'?'}).name;
- r.json({max:MAX(),turn:!!((process.env.METERED_DOMAIN&&process.env.METERED_API_KEY)||process.env.TURN_URLS),push:!!wp,pages:D.pages.map(g=>({id:g.id,name:g.name,rss:g.rss||'',ver:!!g.ver,ok:g.ok||0,err:g.err||''})),posts:D.posts.filter(p=>!p.del).length,
+app.get('/api/admin',adm,async(q,r)=>{await ice();const nm=id=>(D.users.find(u=>u.id==id)||D.pages.find(g=>g.id==id)||{name:'?'}).name;
+ r.json({max:MAX(),turn:!!((process.env.METERED_DOMAIN&&process.env.METERED_API_KEY)||process.env.TURN_URLS),push:!!wp,turnGot:!!(iceC&&iceC.v.length>1),iceErr,pages:D.pages.map(g=>({id:g.id,name:g.name,rss:g.rss||'',ver:!!g.ver,ok:g.ok||0,err:g.err||''})),posts:D.posts.filter(p=>!p.del).length,
  users:D.users.map(u=>({id:u.id,name:u.name,admin:!!u.admin,ban:!!u.ban,posts:D.posts.filter(p=>p.uid==u.id&&!p.del).length})),
  reports:D.rp.map(x=>{const p=x.type=='post'?D.posts.find(p=>p.id==x.tid):null;if(x.type=='post'&&!p)return null;const au=p?p.uid:x.tid;
   return{id:x.id,type:x.type,by:nm(x.by),target:nm(au),uid:au,tid:x.tid,reason:x.reason,snip:p?(p.text||'(photo/video)').slice(0,120):''}}).filter(Boolean)})});
