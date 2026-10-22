@@ -2,6 +2,7 @@
 <html lang="bn"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bondhu</title>
+<link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#1877f2"><link rel="apple-touch-icon" href="/icon-192.png">
 <style>
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f0f2f5;--card:#fff;--tx:#1c1e21;--mu:#65676b;--pr:#1877f2;--bd:#dddfe2}
 @media (prefers-color-scheme:dark){:root{--bg:#18191a;--card:#242526;--tx:#e4e6eb;--mu:#b0b3b8;--pr:#4599ff;--bd:#3a3b3c}}
@@ -19,6 +20,7 @@ button.s{background:var(--bd);color:var(--tx)}
 .av{width:38px;height:38px;border-radius:50%;background:var(--pr);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
 .mu{color:var(--mu);font-size:13px}img.av{object-fit:cover;display:block}img.p{width:100%;border-radius:8px;margin-top:8px;display:block}
 .cm{background:var(--bg);border-radius:14px;padding:6px 12px;margin:4px 0;font-size:14px}
+.vb{display:inline-flex;width:15px;height:15px;border-radius:50%;background:var(--pr);color:#fff;font-size:10px;align-items:center;justify-content:center;vertical-align:middle;margin-left:3px}
 .tabs button{background:transparent;color:var(--mu);border-radius:0;border-bottom:3px solid transparent}.tabs button.on{color:var(--pr);border-color:var(--pr)}
 </style></head><body>
 <div id="app"></div>
@@ -29,11 +31,13 @@ button.s{background:var(--bd);color:var(--tx)}
 <h2 id="cn" style="margin:0"></h2><div id="cs"></div><div class="row" id="cb"></div></div>
 <script src="/socket.io/socket.io.js"></script>
 <script>
-let S=null,tab='feed',cw=null,img=null,vid=null,tagSel=[],vis='pub',allowSel=[],rxOpen=null,gal='all',AD=null,ntB=0,busy=false,cbusy=false,pbusy=false,sock,tk=localStorage.getItem('bt'),seen={};
+let S=null,tab='feed',cw=null,img=null,vid=null,tagSel=[],vis='pub',allowSel=[],rxOpen=null,gal='all',AD=null,ntB=0,busy=false,cbusy=false,pbusy=false,sock,tk=localStorage.getItem('bt'),seen={},sq='',sf='all',ICE=null,ICEt=0,pushOn=false,ct=null;
 let seenFor=null;const loadSeen=id=>{try{seen=JSON.parse(localStorage.getItem('bs'+id)||'{}')}catch(e){seen={}}};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const U=id=>S.users.find(u=>u.id==id)||{name:'?'};
+const U=id=>S.users.find(u=>u.id==id)||(S.pages||[]).find(g=>g.id==id)||{name:'?'};
+const vb=u=>u&&u.ver?'<span class="vb" title="Verified">✓</span>':'';
+const mt=(x,q)=>String(x||'').toLowerCase().includes(q);
 const av=(u,z)=>{u=u||{};const st=z?`width:${z}px;height:${z}px;font-size:${Math.round(z/2.3)}px`:'';return u.pic?`<img class="av" src="${u.pic}" style="${st}">`:`<div class="av" style="${st}">${esc((u.name||'?')[0]).toUpperCase()}</div>`};
 const isF=id=>S.fr.some(f=>f.includes(id));
 const thr=id=>S.mt.find(t=>t.a==id||t.b==id);
@@ -45,7 +49,7 @@ async function api(p,b){try{const r=await fetch('/api/'+p,{method:b?'POST':'GET'
  if(r.status==401){logout();return null}const j=await r.json();if(!r.ok){alert(j.e||'Error');return null}return j}catch(e){return null}}
 let lastN=0,lastM=0,first=true;
 function pushN(){const mx=S.nt.reduce((a,n)=>Math.max(a,n.id),0),mm=S.msgs.filter(m=>m.a!=S.me).reduce((a,m)=>Math.max(a,m.id),0);
- if(!first&&document.hidden&&window.Notification&&Notification.permission=='granted'){
+ if(!first&&document.hidden&&!pushOn&&window.Notification&&Notification.permission=='granted'){
   S.nt.filter(n=>n.id>lastN&&!n.r).forEach(n=>new Notification('Bondhu',{body:(n.f?U(n.f).name+' ':'')+n.tx}));
   S.msgs.filter(m=>m.a!=S.me&&m.id>lastM).slice(-3).forEach(m=>new Notification(U(m.a).name,{body:m.text||(m.m?(m.m.k=='img'?'📷 Photo':'🎬 Video'):'')}))}
  lastN=mx;lastM=mm;first=false}
@@ -53,16 +57,17 @@ async function load(){const r=await api('state');if(r){if(seenFor!=r.me){seenFor
 async function loadAd(){AD=await api('admin');draw()}
 async function auth(p){const r=await fetch('/api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('n').value,pw:$('p').value})});
  const j=await r.json();if(!r.ok)return alert(j.e);tk=j.token;localStorage.setItem('bt',tk);start()}
-function start(){sock=io({auth:{token:tk}});sock.on('sync',load);sock.on('sig',onSig);sock.on('connect_error',e=>{if(e.message=='auth')logout()});load()}
-function logout(){tk=null;S=null;AD=null;tab='feed';cw=null;seenFor=null;seen={};first=true;lastN=0;lastM=0;localStorage.removeItem('bt');sock&&sock.disconnect();draw()}
-async function signOut(){if(!confirm('Logout korbe? Arekta account diye login korte parbe.'))return;const t=tk;try{await fetch('/api/logout',{method:'POST',headers:{Authorization:'Bearer '+t}})}catch(e){}logout()}
+function start(){sock=io({auth:{token:tk}});sock.on('sync',load);sock.on('sig',onSig);sock.on('connect_error',e=>{if(e.message=='auth')logout()});load();pushSub(false);iceS()}
+function logout(){pushOn=false;tk=null;S=null;AD=null;tab='feed';cw=null;seenFor=null;seen={};first=true;lastN=0;lastM=0;localStorage.removeItem('bt');sock&&sock.disconnect();draw()}
+async function signOut(){if(!confirm('Logout korbe? Arekta account diye login korte parbe.'))return;const t=tk;try{const rg=await navigator.serviceWorker.getRegistration('/'),sb=rg&&await rg.pushManager.getSubscription();if(sb)await fetch('/api/push/unsub',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({ep:sb.endpoint})})}catch(e){}
+ try{await fetch('/api/logout',{method:'POST',headers:{Authorization:'Bearer '+t}})}catch(e){}logout()}
 
 function draw(){const a=document.activeElement,k=a&&a.id,v=a&&a.value,A=$('app'),td=$('t')?$('t').value:'';
  if(!tk){A.innerHTML=`<main><div class="card"><h2 style="color:var(--pr);margin:0 0 8px">Bondhu</h2><p class="mu">Account khulo ba login koro.</p><input id="n" placeholder="Naam"><input id="p" type="password" placeholder="Password" onkeydown="if(event.key=='Enter')auth('login')"><div class="row"><button onclick="auth('login')">Login</button><button onclick="auth('signup')" style="background:#42b72a">Sign up</button></div></div></main>`;return}
  if(!S){A.innerHTML='<main><p class="mu">Loading...</p></main>';return}
  const nr=S.rq.filter(r=>r.to==S.me).length,un=S.users.reduce((s,x)=>s+unread(x.id),0),nn=S.nt.filter(n=>!n.r).length;document.title=(nn+un?'('+(nn+un)+') ':'')+'Bondhu';
- const b=({feed,ppl,chat,gal:galV,nt:ntV,adm:admV,set:setV}[tab]||feed)();if(tab=='nt'&&nn&&!ntB){ntB=1;api('nt/read',{}).then(()=>ntB=0)}
- A.innerHTML=`<header><b>Bondhu</b><div class="row"><span style="cursor:pointer;display:flex" onclick="tab='set';cw=null;draw()">${av(U(S.me),30)}</span><span class="mu">${esc(U(S.me).name)}</span><button class="g" onclick="signOut()">Logout / Switch</button></div></header><main><div class="tabs row">${[['feed','Feed'],['ppl','Manush'+(nr?' ('+nr+')':'')],['chat','Chat'+(un?' ('+un+')':'')],['gal','🖼'],['nt','🔔'+(nn?' ('+nn+')':'')],['set','⚙️']].concat(S.admin?[['adm','🛡️']]:[]).map(([k,l])=>`<button class="${tab==k?'on':''}" onclick="tab='${k}';cw=null;${k=='adm'?'loadAd()':'draw()'}">${l}</button>`).join('')}</div>${b}</main>`;
+ const b=({feed,ppl,chat,sr:srV,gal:galV,nt:ntV,adm:admV,set:setV}[tab]||feed)();if(tab=='nt'&&nn&&!ntB){ntB=1;api('nt/read',{}).then(()=>ntB=0)}
+ A.innerHTML=`<header><b>Bondhu</b><div class="row"><span style="cursor:pointer;display:flex" onclick="tab='set';cw=null;draw()">${av(U(S.me),30)}</span><span class="mu">${esc(U(S.me).name)}</span><button class="g" onclick="signOut()">Logout / Switch</button></div></header><main><div class="tabs row">${[['feed','Feed'],['ppl','Manush'+(nr?' ('+nr+')':'')],['chat','Chat'+(un?' ('+un+')':'')],['sr','🔍'],['gal','🖼'],['nt','🔔'+(nn?' ('+nn+')':'')],['set','⚙️']].concat(S.admin?[['adm','🛡️']]:[]).map(([k,l])=>`<button class="${tab==k?'on':''}" onclick="tab='${k}';cw=null;${k=='adm'?'loadAd()':'draw()'}">${l}</button>`).join('')}</div>${b}</main>`;
  if($('t')&&td)$('t').value=td;if(k){const e=$(k);if(e){e.value=v;e.focus()}}if($('ms'))$('ms').scrollTop=1e9}
 
 const tg=id=>{const i=tagSel.indexOf(id);i<0?tagSel.push(id):tagSel.splice(i,1);draw()};
@@ -75,9 +80,10 @@ const rxSum=p=>{const c={};Object.values(p.rx||{}).forEach(k=>c[k]=(c[k]||0)+1);
 const react=(id,k)=>{rxOpen=null;act('react/'+id+'/'+k)};
 const report=(type,id)=>{const r=prompt('Report er karon likho');if(r&&r.trim())act('report',{type,id,reason:r})};
 const card=p=>{const my=(p.rx||{})[S.me],tgs=p.tags||[],own=p.uid==S.me,rs=rxSum(p);
- return `<div class="card"><div class="row sp"><div class="row">${av(U(p.uid))}<div><b>${esc(U(p.uid).name)}</b>${isF(p.uid)?' <span class="mu">· bondhu</span>':''}<div class="mu">${ago(p.t)} · ${VL[p.vis||'pub']}</div></div></div>${own||S.admin?`<button class="g" onclick="if(confirm(${S.admin&&!own?'\'Post permanently delete korbe?\'':'\'Post Trash e jabe. Pore ferot ante parbe.\''}))act('post/${p.id}/del')">🗑</button>`:`<button class="g" onclick="report('post',${p.id})">🚩</button>`}</div><p style="white-space:pre-wrap">${esc(p.text)}</p>${tgs.length?`<div class="mu">— ${tgs.map(i=>'@'+esc(U(i).name)).join(', ')} ke tag kora hoyeche${tgs.includes(S.me)?' (tomake!)':''}</div>`:''}${p.img?`<img class="p" src="${p.img}">`:''}${p.vid?`<video class="p" src="${p.vid}" controls playsinline preload="metadata"></video>`:''}${rs?`<div class="mu" style="margin-top:6px">${rs}</div>`:''}<div class="row" style="border-top:1px solid var(--bd);margin-top:8px;padding-top:6px"><button class="g ${my?'on':''}" onclick="rxOpen=rxOpen==${p.id}?null:${p.id};draw()">${my?RX[my]:'🙂'} React</button><span class="mu">💬 ${p.c.length}</span></div>${rxOpen==p.id?`<div class="row" style="margin-top:4px">${Object.keys(RX).map(k=>`<button class="g" style="font-size:20px" onclick="react(${p.id},'${k}')">${RX[k]}</button>`).join('')}</div>`:''}${p.c.map(c=>`<div class="cm"><b>${esc(U(c.uid).name)}</b> ${esc(c.text)}</div>`).join('')}<input id="c${p.id}" placeholder="Comment likho, Enter chapo" onkeydown="if(event.key=='Enter')cmt(${p.id})"></div>`};
-const feed=()=>`<div class="card"><textarea id="t" rows="2" placeholder="Tomar mone ki chole?"></textarea>${img?`<img class="p" src="${img}">`:''}${vid?`<video class="p" src="${vid.local}" controls playsinline></video>`:''}${tagUI()}${visUI()}<div class="row sp"><div class="row"><label class="mu" style="cursor:pointer">📷 Photo<input type="file" accept="image/*" hidden onchange="pick(this)"></label><label class="mu" style="cursor:pointer">🎬 Video<input type="file" accept="video/*" hidden onchange="pickVid(this)"></label></div><button onclick="post()" ${busy?'disabled':''}>${busy?'Upload hochche...':'Post'}</button></div></div>`+
- ([...S.posts].reverse().map(card).join('')||'<p class="mu">Ekhono kono post nai. Prothom post tumi koro!</p>');
+ return `<div class="card"><div class="row sp"><div class="row">${av(U(p.uid))}<div><b>${esc(U(p.uid).name)}</b>${vb(U(p.uid))}${isF(p.uid)?' <span class="mu">· bondhu</span>':''}<div class="mu">${ago(p.t)} · ${p.pg?'📰 News':VL[p.vis||'pub']}</div></div></div>${own||S.admin?`<button class="g" onclick="if(confirm(${S.admin&&!own?'\'Post permanently delete korbe?\'':'\'Post Trash e jabe. Pore ferot ante parbe.\''}))act('post/${p.id}/del')">🗑</button>`:`<button class="g" onclick="report('post',${p.id})">🚩</button>`}</div>${p.pg?`<p style="white-space:pre-wrap;margin-bottom:4px"><b>${esc(p.text)}</b></p>${p.desc?`<p class="mu" style="margin:0 0 6px">${esc(p.desc)}</p>`:''}${/^https?:\/\//.test(p.link||'')?`<a href="${esc(p.link)}" target="_blank" rel="noopener noreferrer">🔗 Puro khobor poro</a>`:''}`:`<p style="white-space:pre-wrap">${esc(p.text)}</p>`}${tgs.length?`<div class="mu">— ${tgs.map(i=>'@'+esc(U(i).name)).join(', ')} ke tag kora hoyeche${tgs.includes(S.me)?' (tomake!)':''}</div>`:''}${p.img?`<img class="p" src="${p.img}">`:''}${p.vid?`<video class="p" src="${p.vid}" controls playsinline preload="metadata"></video>`:''}${rs?`<div class="mu" style="margin-top:6px">${rs}</div>`:''}<div class="row" style="border-top:1px solid var(--bd);margin-top:8px;padding-top:6px"><button class="g ${my?'on':''}" onclick="rxOpen=rxOpen==${p.id}?null:${p.id};draw()">${my?RX[my]:'🙂'} React</button><span class="mu">💬 ${p.c.length}</span></div>${rxOpen==p.id?`<div class="row" style="margin-top:4px">${Object.keys(RX).map(k=>`<button class="g" style="font-size:20px" onclick="react(${p.id},'${k}')">${RX[k]}</button>`).join('')}</div>`:''}${p.c.map(c=>`<div class="cm"><b>${esc(U(c.uid).name)}</b> ${esc(c.text)}</div>`).join('')}<input id="c${p.id}" placeholder="Comment likho, Enter chapo" onkeydown="if(event.key=='Enter')cmt(${p.id})"></div>`};
+const nbn=()=>pushOk()&&!pushOn&&Notification.permission=='default'?`<div class="card row sp"><span class="mu">🔔 App bondho thakleo notification pete chao?</span><button onclick="askNotif()">On koro</button></div>`:'';
+const feed=()=>nbn()+`<div class="card"><textarea id="t" rows="2" placeholder="Tomar mone ki chole?"></textarea>${img?`<img class="p" src="${img}">`:''}${vid?`<video class="p" src="${vid.local}" controls playsinline></video>`:''}${tagUI()}${visUI()}<div class="row sp"><div class="row"><label class="mu" style="cursor:pointer">📷 Photo<input type="file" accept="image/*" hidden onchange="pick(this)"></label><label class="mu" style="cursor:pointer">🎬 Video<input type="file" accept="video/*" hidden onchange="pickVid(this)"></label></div><button onclick="post()" ${busy?'disabled':''}>${busy?'Upload hochche...':'Post'}</button></div></div>`+
+ ([...S.posts].reverse().map(card).join('')||'<p class="mu">Ekhono kono post nai. Prothom post tumi koro! 🔍 theke newspaper/page follow korle tader post ekhane ashbe.</p>');
 async function act(p,b){await api(p,b||{});load()}
 async function post(){if(busy)return;if(vis=='cus'&&!allowSel.length)return alert('Custom e ontoto ekjon bondhu select koro');const t=$('t').value.trim();if(!t&&!img&&!vid)return;busy=true;draw();let url=null;
  if(vid){try{const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':vid.file.type||'video/mp4',Authorization:'Bearer '+tk},body:vid.file}),j=await r.json();if(!r.ok)throw new Error(j.e||'Error');url=j.url}catch(e){busy=false;draw();return alert('Video upload hoyni: '+e.message)}}
@@ -94,10 +100,25 @@ function frBtn(id){const m=S.me;
  if(S.rq.some(r=>r.from==m&&r.to==id))return `<button class="s" onclick="act('fr/${id}/add')">Request pathano hoyeche ✕</button>`;
  if(S.rq.some(r=>r.from==id&&r.to==m))return `<button onclick="act('fr/${id}/acc')">Accept</button>`;
  return `<button onclick="act('fr/${id}/add')">Add friend</button>`}
-const ppl=()=>{const r=S.rq.filter(x=>x.to==S.me),bl=S.users.filter(x=>S.bl.includes(x.id));
- return (r.length?`<div class="card"><b>Friend request (${r.length})</b>`+r.map(x=>`<div class="row sp" style="margin-top:10px"><div class="row">${av(U(x.from))}<b>${esc(U(x.from).name)}</b></div><div class="row"><button onclick="act('fr/${x.from}/acc')">Accept</button><button class="g" onclick="act('fr/${x.from}/rej')">Delete</button></div></div>`).join('')+`</div>`:'')+
- `<div class="card"><b>Manush</b>`+(S.users.filter(x=>x.id!=S.me&&!S.bl.includes(x.id)).map(x=>`<div class="row sp" style="margin-top:10px"><div class="row">${av(x)}<b>${esc(x.name)}</b>${on(x.id)}</div><div class="row"><button class="s" onclick="cw=${x.id};tab='chat';draw()">💬 Message</button>${frBtn(x.id)}<button class="g" title="Report" onclick="report('user',${x.id})">🚩</button><button class="g" title="Block" onclick="if(confirm('Block korbe?'))act('block/${x.id}/1')">🚫</button></div></div>`).join('')||'<p class="mu">Onno keu ekhono sign up kore nai. Link share koro!</p>')+`</div>`+
+const prow=x=>`<div class="row sp" style="margin-top:10px"><div class="row">${av(x)}<div><b>${esc(x.name)}</b> ${on(x.id)}<div class="mu">👥 ${(S.mut||{})[x.id]||0} mutual bondhu</div></div></div><div class="row"><button class="s" onclick="cw=${x.id};tab='chat';draw()">💬 Message</button>${frBtn(x.id)}<button class="g" title="Report" onclick="report('user',${x.id})">🚩</button><button class="g" title="Block" onclick="if(confirm('Block korbe?'))act('block/${x.id}/1')">🚫</button></div></div>`;
+const ppl=()=>{const r=S.rq.filter(x=>x.to==S.me),bl=S.users.filter(x=>S.bl.includes(x.id)),fl=S.users.filter(x=>isF(x.id)&&!S.bl.includes(x.id)),ot=S.users.filter(x=>x.id!=S.me&&!isF(x.id)&&!S.bl.includes(x.id));
+ return (r.length?`<div class="card"><b>Friend request (${r.length})</b>`+r.map(x=>`<div class="row sp" style="margin-top:10px"><div class="row">${av(U(x.from))}<div><b>${esc(U(x.from).name)}</b><div class="mu">👥 ${(S.mut||{})[x.from]||0} mutual bondhu</div></div></div><div class="row"><button onclick="act('fr/${x.from}/acc')">Accept</button><button class="g" onclick="act('fr/${x.from}/rej')">Delete</button></div></div>`).join('')+`</div>`:'')+
+ `<div class="card"><b>👥 Amar bondhu (${fl.length})</b><div class="mu">🔒 Ei list shudhu tumi dekhte paro. Onno keu tomar friend list dekhbe na, shudhu koto jon mutual ta dekhbe.</div>`+(fl.map(prow).join('')||'<p class="mu">Ekhono kono bondhu nai. Niche theke Add friend koro.</p>')+`</div>`+
+ `<div class="card"><b>Manush</b>`+(ot.map(prow).join('')||'<p class="mu">'+(fl.length?'Shobai tomar bondhu 🎉':'Onno keu ekhono sign up kore nai. Link share koro!')+'</p>')+`</div>`+
  (bl.length?`<div class="card"><b>Blocked</b>`+bl.map(x=>`<div class="row sp" style="margin-top:10px"><b>${esc(x.name)}</b><button class="s" onclick="act('block/${x.id}/0')">Unblock</button></div>`).join('')+`</div>`:'')};
+
+/* ---- Search ---- */
+const SF={all:'Shob',ppl:'Manush',pg:'Page / News',vid:'Video'};
+const pgRow=g=>{const f=S.pf.includes(g.id);return `<div class="row sp" style="margin-top:10px"><div class="row">${av(g)}<div><b>${esc(g.name)}</b>${vb(g)}<div class="mu">${g.fol} follower</div></div></div><button class="${f?'s':''}" onclick="act('pg/${g.id}/${f?0:1}')">${f?'Following ✓':'Follow'}</button></div>`};
+const sec=(t,h)=>h.length?`<div class="card"><b>${t}</b>${h.join('')}</div>`:'';
+function srRes(){const q=sq.trim().toLowerCase(),o=[],all=sf=='all',list=[...S.posts].reverse();
+ if((all||sf=='ppl')&&(q||sf=='ppl'))o.push(sec('Manush',S.users.filter(x=>x.id!=S.me&&!S.bl.includes(x.id)&&(!q||mt(x.name,q))).map(prow)));
+ if(all||sf=='pg'){o.push(sec('Page / Newspaper',S.pages.filter(g=>!q||mt(g.name,q)).map(pgRow)));
+  if(q)o.push(...list.filter(p=>p.pg&&(mt(p.text,q)||mt(p.desc,q))).slice(0,15).map(card))}
+ if((all&&q)||sf=='vid')o.push(...list.filter(p=>p.vid&&(!q||mt(p.text,q)||mt(U(p.uid).name,q))).slice(0,20).map(card));
+ return o.join('')||'<p class="mu">Kichu pawa jayni.</p>'}
+const srUpd=()=>{const e=$('sr');if(e)e.innerHTML=srRes()};
+const srV=()=>`<div class="card"><input id="q" value="${esc(sq)}" placeholder="🔍 Bondhu, video, newspaper/page khojo..." oninput="sq=this.value;srUpd()"><div class="row">${Object.keys(SF).map(k=>`<button class="g ${sf==k?'on':''}" onclick="sf='${k}';draw()">${SF[k]}</button>`).join('')}</div>${sf=='pg'||sf=='all'?'<div class="mu">Page follow korle tader post tomar Feed e ashbe.</div>':''}</div><div id="sr">${srRes()}</div>`;
 
 function chat(){
  if(cw){const o=U(cw),m=S.msgs.filter(x=>x.a==cw||x.b==cw),t=thr(cw),ok=canTalk(cw),bk=S.bl.includes(cw),inReq=!ok&&t&&t.st=='pending'&&t.b==S.me;
@@ -142,13 +163,32 @@ const galV=()=>{const tn=(S.trash||[]).length,bar=`<div class="card row"><button
  const ps=S.posts.filter(p=>(p.img||p.vid)&&(gal=='all'||p.uid==S.me)).reverse();
  return bar+`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px">`+(ps.map(tile).join('')||'<p class="mu">Kono photo/video nai.</p>')+`</div>`};
 function zoom(id){const p=S.posts.find(x=>x.id==id);if(!p)return;const d=document.createElement('div');d.style.cssText='position:fixed;inset:0;background:#000d;z-index:60;display:flex;align-items:center;justify-content:center';d.onclick=()=>d.remove();d.innerHTML='<img src="'+p.img+'" style="max-width:96%;max-height:92%">';document.body.appendChild(d)}
-const setV=()=>`<div class="card" style="text-align:center"><div style="position:relative;display:inline-block">${av(U(S.me),110)}<label title="Profile photo bodlao" style="position:absolute;right:0;bottom:0;width:36px;height:36px;border-radius:50%;background:var(--bd);color:var(--tx);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:19px;border:3px solid var(--card)">📷<input type="file" accept="image/*" hidden onchange="pickAvatar(this)"></label></div><h3 style="margin:8px 0 2px">${esc(U(S.me).name)}</h3>${pbusy?'<div class="mu">⏳ Upload hochche...</div>':U(S.me).pic?`<button class="g" onclick="if(confirm('Profile photo shoriye felbe?'))act('profile/pic/del')">Photo shoriye felo</button>`:'<div class="mu">📷 e chap diye profile photo dao</div>'}</div><div class="card"><b>Account</b><p class="mu">Naam: ${esc(U(S.me).name)}${S.admin?' · 🛡️ Admin':''}</p><button class="s" onclick="askNotif()">🔔 Browser notification on koro</button></div><div class="card"><b>Account delete</b><p class="mu">Account delete korle tomar shob post (Trash shoho), message, bondhu ar video permanently mule jabe. Eta ferot ana jay na.</p>${S.admin?'<p class="mu">Admin account eikhan theke delete kora jay na.</p>':'<input id="dp" type="password" placeholder="Password dao"><button onclick="delAcc()" style="background:#e41e3f">Account delete koro</button>'}</div>`;
+const setV=()=>`<div class="card" style="text-align:center"><div style="position:relative;display:inline-block">${av(U(S.me),110)}<label title="Profile photo bodlao" style="position:absolute;right:0;bottom:0;width:36px;height:36px;border-radius:50%;background:var(--bd);color:var(--tx);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:19px;border:3px solid var(--card)">📷<input type="file" accept="image/*" hidden onchange="pickAvatar(this)"></label></div><h3 style="margin:8px 0 2px">${esc(U(S.me).name)}</h3>${pbusy?'<div class="mu">⏳ Upload hochche...</div>':U(S.me).pic?`<button class="g" onclick="if(confirm('Profile photo shoriye felbe?'))act('profile/pic/del')">Photo shoriye felo</button>`:'<div class="mu">📷 e chap diye profile photo dao</div>'}</div><div class="card"><b>Account</b><p class="mu">Naam: ${esc(U(S.me).name)}${S.admin?' · 🛡️ Admin':''}</p>${pushOn?'<div class="mu">🔔 ✅ Notification on ache (app bondho thakleo ashbe)</div>':'<button class="s" onclick="askNotif()">🔔 Notification on koro</button>'}</div><div class="card"><b>Account delete</b><p class="mu">Account delete korle tomar shob post (Trash shoho), message, bondhu ar video permanently mule jabe. Eta ferot ana jay na.</p>${S.admin?'<p class="mu">Admin account eikhan theke delete kora jay na.</p>':'<input id="dp" type="password" placeholder="Password dao"><button onclick="delAcc()" style="background:#e41e3f">Account delete koro</button>'}</div>`;
 async function delAcc(){const p=$('dp').value;if(!p)return alert('Password dao');if(!confirm('Sotti account delete korbe? Eta ferot ana jabe na.'))return;if(await api('delete-account',{pw:p})){alert('Account delete hoyeche');logout()}}
-function askNotif(){if(!window.Notification)return alert('Ei browser e support nai');Notification.requestPermission().then(p=>alert(p=='granted'?'On hoyeche (app khola thakle kaj korbe)':'Permission dao nai'))}
-const admV=()=>{if(!AD)return '<p class="mu">Loading...</p>';
- return `<div class="card"><b>🛡️ Admin panel</b><p class="mu">User: ${AD.users.length}/${AD.max} · Post: ${AD.posts} · Report: ${AD.reports.length}</p><div class="row"><input id="mx" type="number" min="2" value="${AD.max}" style="width:90px"><button onclick="setMax()">User limit set koro</button></div></div>`+
+const pushOk=()=>'serviceWorker' in navigator&&'PushManager' in window&&!!window.Notification;
+const b64=x=>{x=(x+'='.repeat((4-x.length%4)%4)).replace(/-/g,'+').replace(/_/g,'/');return Uint8Array.from([...atob(x)].map(c=>c.charCodeAt(0)))};
+async function pushSub(ask){if(!pushOk())return false;
+ try{const reg=await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;
+  if(Notification.permission=='default'&&ask)await Notification.requestPermission();
+  if(Notification.permission!='granted')return false;
+  const k=await api('push/key');if(!k||!k.k)return false;const kb=b64(k.k);let sb=await reg.pushManager.getSubscription();
+  if(sb&&sb.options&&sb.options.applicationServerKey){const a=new Uint8Array(sb.options.applicationServerKey);if(a.length!=kb.length||a.some((v,i)=>v!=kb[i])){await sb.unsubscribe();sb=null}}
+  if(!sb)sb=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:kb});
+  pushOn=!!(await api('push/sub',{sub:sb.toJSON()}));if(S)draw();return pushOn}catch(e){return false}}
+async function askNotif(){if(!pushOk()){const ios=/iphone|ipad/i.test(navigator.userAgent);return alert(ios?'iPhone e: Safari te Share → "Add to Home Screen" kore, Home Screen er Bondhu icon theke app kholo. Tarpor ekhane notification on koro.':'Ei browser e notification support nai')}
+ const ok=await pushSub(true);alert(ok?'✅ Notification on hoyeche. App bondho thakleo notification asbe.':'Notification on hoyni. Phone/browser settings e Bondhu er notification Allow koro.');if(S)draw()}
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+const admV=()=>{if(!AD)return '<p class=\"mu\">Loading...</p>';
+ return `<div class="card"><b>⚙️ System status</b><p class="mu">📞 Call relay (TURN): ${AD.turn?'✅ on':'❌ off — mobile data / alada network e call connect nao hote pare (Render e METERED_DOMAIN + METERED_API_KEY dao)'}<br>🔔 Push notification: ${AD.push?'✅ on':'❌ off'}</p><div class="row"><button class="s" onclick="bkp()">⬇️ Backup download</button><label class="mu" style="cursor:pointer;border:1px solid var(--bd);border-radius:8px;padding:7px 12px">⬆️ Restore<input type="file" accept=".json,application/json" hidden onchange="rst(this)"></label></div></div>`+
+ `<div class="card"><b>📰 Page / Newspaper (${AD.pages.length})</b>`+AD.pages.map(g=>`<div style="margin-top:10px;border-top:1px solid var(--bd);padding-top:8px"><b>${esc(g.name)}</b>${vb(g)}<div class="mu" style="word-break:break-all">${esc(g.rss||'RSS nai (admin nije post korbe)')}</div>${g.err?`<div style="color:#e41e3f;font-size:12px">Error: ${esc(g.err)}</div>`:g.ok?`<div class="mu">Last fetch: ${ago(g.ok)}</div>`:''}<div class="row" style="margin-top:6px">${g.rss?`<button class="s" onclick="act('admin/pg/${g.id}/pull')">🔄 Ekhon ano</button>`:''}<button class="s" onclick="pgPost(${g.id})">✍️ Post</button><button class="g" onclick="if(confirm('Page delete korbe?'))act('admin/pg/${g.id}/del')">🗑</button></div></div>`).join('')+`<div style="margin-top:12px;border-top:1px solid var(--bd);padding-top:8px"><input id="gn" placeholder="Page / newspaper naam"><input id="gr" placeholder="RSS link (optional)"><label class="mu"><input id="gv" type="checkbox" checked style="width:auto"> ✓ Verified</label> <button onclick="addPg()">Page add koro</button></div></div>`+
+ `<div class="card"><b>🛡️ Admin panel</b><p class="mu">User: ${AD.users.length}/${AD.max} · Post: ${AD.posts} · Report: ${AD.reports.length}</p><div class="row"><input id="mx" type="number" min="2" value="${AD.max}" style="width:90px"><button onclick="setMax()">User limit set koro</button></div></div>`+
  `<div class="card"><b>Report (${AD.reports.length})</b>`+(AD.reports.map(r=>`<div style="margin-top:10px;border-top:1px solid var(--bd);padding-top:8px"><div class="mu">${esc(r.by)} report korechhe (${r.type}) → <b>${esc(r.target)}</b></div>${r.snip?`<div class="cm">${esc(r.snip)}</div>`:''}<div>Karon: ${esc(r.reason)}</div><div class="row" style="margin-top:6px">${r.type=='post'?`<button class="s" onclick="if(confirm('Post delete?'))act('admin/post/${r.tid}')">Post delete</button>`:''}<button class="s" onclick="if(confirm('Ban korbe?'))act('admin/ban/${r.uid}/1')">Ban user</button><button class="g" onclick="act('admin/rp/${r.id}')">Dismiss</button></div></div>`).join('')||'<p class="mu">Kono report nai.</p>')+`</div>`+
  `<div class="card"><b>Users</b>`+AD.users.map(u=>`<div class="row sp" style="margin-top:10px"><div><b>${esc(u.name)}</b>${u.admin?' 🛡️':''}${u.ban?' <span style="color:#e41e3f">BANNED</span>':''}<div class="mu">${u.posts} post</div></div>${u.admin?'':`<div class="row"><button class="s" onclick="act('admin/ban/${u.id}/${u.ban?0:1}')">${u.ban?'Unban':'Ban'}</button><button class="g" onclick="if(confirm('Account delete?'))act('admin/del/${u.id}')">🗑</button></div>`}</div>`).join('')+`</div>`};
+function addPg(){const n=$('gn').value.trim();if(!n)return alert('Naam dao');act('admin/pg',{name:n,rss:$('gr').value.trim(),ver:$('gv').checked})}
+function pgPost(id){const t=prompt('Post er text');if(!t||!t.trim())return;act('admin/pg/'+id+'/post',{text:t,link:(prompt('Link (lagbe na hole khali rakho)')||'').trim()})}
+async function bkp(){const r=await fetch('/api/admin/backup',{headers:{Authorization:'Bearer '+tk}});if(!r.ok)return alert('Backup hoyni');const b=await r.blob(),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='bondhu-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click()}
+async function rst(i){const f=i.files[0];i.value='';if(!f||!confirm('Restore korle ekhonkar shob data backup er data diye replace hobe. Sure?'))return;
+ const r=await fetch('/api/admin/restore',{method:'POST',headers:{'Content-Type':'text/plain',Authorization:'Bearer '+tk},body:await f.text()}),j=await r.json().catch(()=>({}));alert(r.ok?'Restore hoyeche. Abar login koro.':(j.e||'Restore hoyni'));if(r.ok)logout()}
 function setMax(){const n=+$('mx').value;if(n>=2)act('admin/max',{n})}
 
 /* ---- Voice/Video call (WebRTC) ---- */
@@ -158,18 +198,20 @@ const endBtn='<button onclick="end()" style="background:#e41e3f;padding:12px 24p
 function ui(n,s,b){$('cl').style.display='flex';$('cn').textContent=n;$('cs').textContent=s;$('cb').innerHTML=b}
 async function media(v){ls=await navigator.mediaDevices.getUserMedia({audio:true,video:!!v});
  $('lv').srcObject=ls;$('lv').style.display=v?'block':'none';$('rv').style.display=v?'block':'none';
- pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+ pc=new RTCPeerConnection({iceServers:await iceS()});
  ls.getTracks().forEach(t=>pc.addTrack(t,ls));
  pc.onicecandidate=e=>e.candidate&&sig(peer,{t:'ice',c:e.candidate});
- pc.ontrack=e=>{$('rv').srcObject=e.streams[0]};
- pc.onconnectionstatechange=()=>{const s=pc&&pc.connectionState;if(s=='connected')ui(U(peer).name,'Connected',endBtn);if(s=='failed')end(1)}}
+ pc.ontrack=e=>{$('rv').srcObject=e.streams[0];$('rv').play().catch(()=>{})};
+ pc.onconnectionstatechange=()=>{const s=pc&&pc.connectionState;if(s=='connected'){clearTimeout(ct);ui(U(peer).name,'Connected',endBtn)}if(s=='disconnected')$('cs').textContent='Network problem... abar connect hochche';if(s=='failed'){alert('Call connect hoyni (network block). Admin ke bolo TURN server on korte.');end()}}}
+async function iceS(){if(ICE&&Date.now()-ICEt<12e5)return ICE;const r=await api('ice');ICE=(r&&r.s)||[{urls:'stun:stun.l.google.com:19302'}];ICEt=Date.now();return ICE}
+const armCt=ms=>{clearTimeout(ct);ct=setTimeout(()=>{if(pc&&pc.connectionState!='connected'){alert('Call connect hoyni. Onno jon uttor dey nai ba network block kore ache.');end()}},ms)}
 async function flush(){for(const c of buf)try{await pc.addIceCandidate(c)}catch(e){}buf=[]}
 async function call(id,v){if(pc||inc)return;peer=id;
  try{await media(v)}catch(e){peer=null;return alert('Mic/camera permission dao')}
  await pc.setLocalDescription(await pc.createOffer());sig(id,{t:'offer',sdp:pc.localDescription,v});
- ui(U(id).name,'Ringing...',endBtn);api('msg/'+id,{text:(v?'🎥 Video':'📞 Voice')+' call kora hoyeche'}).then(load)}
+ ui(U(id).name,'Ringing...',endBtn);armCt(45000);api('msg/'+id,{text:(v?'🎥 Video':'📞 Voice')+' call kora hoyeche'}).then(load)}
 async function onSig({from,data:d}){
- if(d.t=='offer'){if(pc||inc)return sig(from,{t:'bye'});inc={from,d};
+ if(d.t=='offer'){if(inc&&inc.from==from)return;if(pc||inc)return sig(from,{t:'bye'});inc={from,d};
   ui(U(from).name,(d.v?'Video':'Voice')+' call ashche...','<button onclick="acc()" style="background:#42b72a;padding:12px 24px">Accept</button><button onclick="rej()" style="background:#e41e3f;padding:12px 24px">Reject</button>')}
  else if(d.t=='answer'&&pc){await pc.setRemoteDescription(d.sdp);await flush()}
  else if(d.t=='ice'){if(pc&&pc.remoteDescription)try{await pc.addIceCandidate(d.c)}catch(e){}else buf.push(d.c)}
@@ -177,9 +219,9 @@ async function onSig({from,data:d}){
 async function acc(){const{from,d}=inc;inc=null;peer=from;
  try{await media(d.v)}catch(e){sig(from,{t:'bye'});peer=null;$('cl').style.display='none';return alert('Mic/camera permission dao')}
  await pc.setRemoteDescription(d.sdp);await flush();await pc.setLocalDescription(await pc.createAnswer());
- sig(from,{t:'answer',sdp:pc.localDescription});ui(U(from).name,'Connecting...',endBtn)}
+ sig(from,{t:'answer',sdp:pc.localDescription});ui(U(from).name,'Connecting...',endBtn);armCt(30000)}
 function rej(){sig(inc.from,{t:'bye'});inc=null;$('cl').style.display='none'}
-function end(n){if(n!==1&&peer)sig(peer,{t:'bye'});pc&&pc.close();ls&&ls.getTracks().forEach(t=>t.stop());pc=ls=peer=inc=null;buf=[];$('rv').srcObject=null;$('cl').style.display='none'}
+function end(n){clearTimeout(ct);if(n!==1&&peer)sig(peer,{t:'bye'});pc&&pc.close();ls&&ls.getTracks().forEach(t=>t.stop());pc=ls=peer=inc=null;buf=[];$('rv').srcObject=null;$('cl').style.display='none'}
 
 draw();if(tk)start();
 </script></body></html>
