@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="bn"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bondhu</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f0f2f5;--card:#fff;--tx:#1c1e21;--mu:#65676b;--pr:#1877f2;--bd:#dddfe2}
+@media (prefers-color-scheme:dark){:root{--bg:#18191a;--card:#242526;--tx:#e4e6eb;--mu:#b0b3b8;--pr:#4599ff;--bd:#3a3b3c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:env(safe-area-inset-top,0px);background:var(--card);border-bottom:1px solid var(--bd);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;z-index:5}
+header b{color:var(--pr);font-size:22px}
+main{max-width:620px;margin:0 auto;padding:12px}
+.card{background:var(--card);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+input,textarea{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit;margin:4px 0}
+button{background:var(--pr);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+button.g{background:transparent;color:var(--mu);padding:6px 10px}button.g.on{color:var(--pr);font-weight:600}
+button.s{background:var(--bd);color:var(--tx)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.sp{justify-content:space-between}
+.av{width:38px;height:38px;border-radius:50%;background:var(--pr);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.mu{color:var(--mu);font-size:13px}img.p{width:100%;border-radius:8px;margin-top:8px;display:block}
+.cm{background:var(--bg);border-radius:14px;padding:6px 12px;margin:4px 0;font-size:14px}
+.tabs button{background:transparent;color:var(--mu);border-radius:0;border-bottom:3px solid transparent}.tabs button.on{color:var(--pr);border-color:var(--pr)}
+</style></head><body>
+<div id="app"></div>
+<footer style="text-align:center;padding:16px 12px 24px;font-size:13px;color:var(--mu)">Powered by <b>Tanzil</b></footer>
+<div id="cl" style="display:none;position:fixed;inset:0;background:#000e;color:#fff;z-index:50;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+<video id="rv" autoplay playsinline style="max-width:92%;max-height:55%;border-radius:10px"></video>
+<video id="lv" autoplay playsinline muted style="width:90px;border-radius:8px;position:absolute;right:12px;top:calc(12px + env(safe-area-inset-top,0px))"></video>
+<h2 id="cn" style="margin:0"></h2><div id="cs"></div><div class="row" id="cb"></div></div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+let S=null,tab='feed',cw=null,img=null,sock,tk=localStorage.getItem('bt'),seen={};
+try{seen=JSON.parse(localStorage.getItem('bs')||'{}')}catch(e){}
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const U=id=>S.users.find(u=>u.id==id)||{name:'?'};
+const av=n=>`<div class="av">${esc((n||'?')[0]).toUpperCase()}</div>`;
+const isF=id=>S.fr.some(f=>f.includes(id));
+const on=id=>S.online.includes(id)?'🟢':'';
+const unread=id=>S.msgs.filter(m=>m.a==id&&m.id>(seen[id]||0)).length;
+const ago=t=>{let m=(Date.now()-t)/6e4|0;return m<1?'ekhon':m<60?m+' min age':m<1440?(m/60|0)+' ghonta age':(m/1440|0)+' din age'};
+async function api(p,b){try{const r=await fetch('/api/'+p,{method:b?'POST':'GET',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tk},body:b?JSON.stringify(b):undefined});
+ if(r.status==401){logout();return null}const j=await r.json();if(!r.ok){alert(j.e||'Error');return null}return j}catch(e){return null}}
+async function load(){const r=await api('state');if(r){S=r;draw()}}
+async function auth(p){const r=await fetch('/api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('n').value,pw:$('p').value})});
+ const j=await r.json();if(!r.ok)return alert(j.e);tk=j.token;localStorage.setItem('bt',tk);start()}
+function start(){sock=io({auth:{token:tk}});sock.on('sync',load);sock.on('sig',onSig);sock.on('connect_error',e=>{if(e.message=='auth')logout()});load()}
+function logout(){tk=null;S=null;localStorage.removeItem('bt');sock&&sock.disconnect();draw()}
+
+function draw(){const a=document.activeElement,k=a&&a.id,v=a&&a.value,A=$('app');
+ if(!tk){A.innerHTML=`<main><div class="card"><h2 style="color:var(--pr);margin:0 0 8px">Bondhu</h2><p class="mu">Account khulo ba login koro.</p><input id="n" placeholder="Naam"><input id="p" type="password" placeholder="Password"><div class="row"><button onclick="auth('login')">Login</button><button onclick="auth('signup')" style="background:#42b72a">Sign up</button></div></div></main>`;return}
+ if(!S){A.innerHTML='<main><p class="mu">Loading...</p></main>';return}
+ const nr=S.rq.filter(r=>r.to==S.me).length,un=S.users.reduce((s,x)=>s+unread(x.id),0);
+ const b=tab=='feed'?feed():tab=='ppl'?ppl():chat();
+ A.innerHTML=`<header><b>Bondhu</b><div class="row"><span class="mu">${esc(U(S.me).name)}</span><button class="g" onclick="logout()">Logout</button></div></header><main><div class="tabs row"><button class="${tab=='feed'?'on':''}" onclick="tab='feed';draw()">Feed</button><button class="${tab=='ppl'?'on':''}" onclick="tab='ppl';draw()">Manush${nr?' ('+nr+')':''}</button><button class="${tab=='chat'?'on':''}" onclick="tab='chat';cw=null;draw()">Chat${un?' ('+un+')':''}</button></div>${b}</main>`;
+ if(k){const e=$(k);if(e){e.value=v;e.focus()}}if($('ms'))$('ms').scrollTop=1e9}
+
+const feed=()=>`<div class="card"><textarea id="t" rows="2" placeholder="Tomar mone ki chole?"></textarea>${img?`<img class="p" src="${img}">`:''}<div class="row sp"><label class="mu" style="cursor:pointer">📷 Photo<input type="file" accept="image/*" hidden onchange="pick(this)"></label><button onclick="post()">Post</button></div></div>`+
+ ([...S.posts].reverse().map(p=>{const l=p.likes.includes(S.me);return `<div class="card"><div class="row">${av(U(p.uid).name)}<div><b>${esc(U(p.uid).name)}</b>${isF(p.uid)?' <span class="mu">· bondhu</span>':''}<div class="mu">${ago(p.t)}</div></div></div><p style="white-space:pre-wrap">${esc(p.text)}</p>${p.img?`<img class="p" src="${p.img}">`:''}<div class="row" style="border-top:1px solid var(--bd);margin-top:8px;padding-top:6px"><button class="g ${l?'on':''}" onclick="act('like/${p.id}')">👍 Like ${p.likes.length||''}</button><span class="mu">💬 ${p.c.length}</span></div>${p.c.map(c=>`<div class="cm"><b>${esc(U(c.uid).name)}</b> ${esc(c.text)}</div>`).join('')}<input id="c${p.id}" placeholder="Comment likho, Enter chapo" onkeydown="if(event.key=='Enter')cmt(${p.id})"></div>`}).join('')||'<p class="mu">Ekhono kono post nai. Prothom post tumi koro!</p>');
+async function act(p,b){await api(p,b||{});load()}
+async function post(){const t=$('t').value.trim();if(!t&&!img)return;if(await api('post',{text:t,img})){img=null;$('t').value='';load()}}
+async function cmt(id){const e=$('c'+id),t=e.value.trim();if(!t)return;e.value='';act('comment/'+id,{text:t})}
+function pick(i){const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const s=Math.min(1,700/im.width),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);img=c.toDataURL('image/jpeg',.7);draw()};im.src=r.result};r.readAsDataURL(f)}
+
+function frBtn(id){const m=S.me;
+ if(isF(id))return `<button class="s" onclick="if(confirm('Unfriend korbe?'))act('fr/${id}/rm')">Bondhu ✓</button>`;
+ if(S.rq.some(r=>r.from==m&&r.to==id))return `<button class="s" onclick="act('fr/${id}/add')">Request pathano hoyeche ✕</button>`;
+ if(S.rq.some(r=>r.from==id&&r.to==m))return `<button onclick="act('fr/${id}/acc')">Accept</button>`;
+ return `<button onclick="act('fr/${id}/add')">Add friend</button>`}
+const ppl=()=>{const r=S.rq.filter(x=>x.to==S.me);
+ return (r.length?`<div class="card"><b>Friend request (${r.length})</b>`+r.map(x=>`<div class="row sp" style="margin-top:10px"><div class="row">${av(U(x.from).name)}<b>${esc(U(x.from).name)}</b></div><div class="row"><button onclick="act('fr/${x.from}/acc')">Accept</button><button class="g" onclick="act('fr/${x.from}/rej')">Delete</button></div></div>`).join('')+`</div>`:'')+
+ `<div class="card"><b>Manush</b>`+(S.users.filter(x=>x.id!=S.me).map(x=>`<div class="row sp" style="margin-top:10px"><div class="row">${av(x.name)}<b>${esc(x.name)}</b>${on(x.id)}</div>${frBtn(x.id)}</div>`).join('')||'<p class="mu">Onno keu ekhono sign up kore nai. Link share koro!</p>')+`</div>`};
+
+function chat(){
+ if(cw){const o=U(cw),m=S.msgs.filter(x=>x.a==cw||x.b==cw);if(m.length){seen[cw]=m[m.length-1].id;localStorage.setItem('bs',JSON.stringify(seen))}
+  return `<div class="card"><div class="row sp"><div class="row"><button class="g" onclick="cw=null;draw()">←</button>${av(o.name)}<b>${esc(o.name)}</b>${on(cw)}</div><div class="row"><button class="g" onclick="call(${cw},0)">📞</button><button class="g" onclick="call(${cw},1)">🎥</button></div></div><div id="ms" style="height:320px;overflow-y:auto;margin:10px 0">`+
+  m.map(x=>{const me=x.a==S.me;return `<div style="display:flex;justify-content:${me?'flex-end':'flex-start'}"><div class="cm" style="max-width:80%;${me?'background:var(--pr);color:#fff':''}">${esc(x.text)}<div style="font-size:10px;opacity:.7">${ago(x.t)}</div></div></div>`}).join('')+
+  `</div><div class="row"><input id="mi" style="flex:1;width:auto" placeholder="Message likho..." onkeydown="if(event.key=='Enter')send()"><button onclick="send()">Send</button></div></div>`}
+ const f=S.users.filter(x=>isF(x.id));
+ return `<div class="card"><b>Chat</b>`+(f.map(x=>{const l=[...S.msgs].reverse().find(m=>m.a==x.id||m.b==x.id),n=unread(x.id);return `<div class="row sp" style="margin-top:10px;cursor:pointer" onclick="cw=${x.id};draw()"><div class="row">${av(x.name)}<div><b>${esc(x.name)}</b> ${on(x.id)}<div class="mu">${l?esc(l.text).slice(0,40):'Kotha shuru koro'}</div></div></div>${n?`<span class="av" style="width:24px;height:24px;font-size:12px">${n}</span>`:''}</div>`}).join('')||'<p class="mu">Chat korte age kaoke bondhu banao (Manush tab e Add friend, onno jon Accept korle).</p>')+`</div>`}
+async function send(){const i=$('mi'),t=i.value.trim();if(!t)return;i.value='';await api('msg/'+cw,{text:t});load()}
+
+/* ---- Voice/Video call (WebRTC) ---- */
+let pc,ls,peer,inc,buf=[];
+const sig=(to,data)=>sock.emit('sig',{to,data});
+const endBtn='<button onclick="end()" style="background:#e41e3f;padding:12px 24px">Call shesh</button>';
+function ui(n,s,b){$('cl').style.display='flex';$('cn').textContent=n;$('cs').textContent=s;$('cb').innerHTML=b}
+async function media(v){ls=await navigator.mediaDevices.getUserMedia({audio:true,video:!!v});
+ $('lv').srcObject=ls;$('lv').style.display=v?'block':'none';$('rv').style.display=v?'block':'none';
+ pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+ ls.getTracks().forEach(t=>pc.addTrack(t,ls));
+ pc.onicecandidate=e=>e.candidate&&sig(peer,{t:'ice',c:e.candidate});
+ pc.ontrack=e=>{$('rv').srcObject=e.streams[0]};
+ pc.onconnectionstatechange=()=>{const s=pc&&pc.connectionState;if(s=='connected')ui(U(peer).name,'Connected',endBtn);if(s=='failed')end(1)}}
+async function flush(){for(const c of buf)try{await pc.addIceCandidate(c)}catch(e){}buf=[]}
+async function call(id,v){if(pc||inc)return;peer=id;
+ try{await media(v)}catch(e){peer=null;return alert('Mic/camera permission dao')}
+ await pc.setLocalDescription(await pc.createOffer());sig(id,{t:'offer',sdp:pc.localDescription,v});
+ ui(U(id).name,'Ringing...',endBtn);api('msg/'+id,{text:(v?'🎥 Video':'📞 Voice')+' call kora hoyeche'}).then(load)}
+async function onSig({from,data:d}){
+ if(d.t=='offer'){if(pc||inc)return sig(from,{t:'bye'});inc={from,d};
+  ui(U(from).name,(d.v?'Video':'Voice')+' call ashche...','<button onclick="acc()" style="background:#42b72a;padding:12px 24px">Accept</button><button onclick="rej()" style="background:#e41e3f;padding:12px 24px">Reject</button>')}
+ else if(d.t=='answer'&&pc){await pc.setRemoteDescription(d.sdp);await flush()}
+ else if(d.t=='ice'){if(pc&&pc.remoteDescription)try{await pc.addIceCandidate(d.c)}catch(e){}else buf.push(d.c)}
+ else if(d.t=='bye'&&from==(peer||(inc&&inc.from)))end(1)}
+async function acc(){const{from,d}=inc;inc=null;peer=from;
+ try{await media(d.v)}catch(e){sig(from,{t:'bye'});peer=null;$('cl').style.display='none';return alert('Mic/camera permission dao')}
+ await pc.setRemoteDescription(d.sdp);await flush();await pc.setLocalDescription(await pc.createAnswer());
+ sig(from,{t:'answer',sdp:pc.localDescription});ui(U(from).name,'Connecting...',endBtn)}
+function rej(){sig(inc.from,{t:'bye'});inc=null;$('cl').style.display='none'}
+function end(n){if(n!==1&&peer)sig(peer,{t:'bye'});pc&&pc.close();ls&&ls.getTracks().forEach(t=>t.stop());pc=ls=peer=inc=null;buf=[];$('rv').srcObject=null;$('cl').style.display='none'}
+
+draw();if(tk)start();
+</script></body></html>
