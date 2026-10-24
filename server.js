@@ -1,11 +1,26 @@
-const express=require('express'),http=require('http'),{Server}=require('socket.io'),crypto=require('crypto'),fs=require('fs'),path=require('path');
+const express=require('express'),http=require('http'),{Server}=require('socket.io'),crypto=require('crypto'),fs=require('fs'),path=require('path'),dns=require('dns'),net=require('net'),https=require('https'),zlib=require('zlib');
+const DBURL=process.env.DATABASE_URL;let pool=null,PRE=null;
+(async()=>{
+ if(DBURL){const {Pool}=require('pg');pool=new Pool({connectionString:DBURL,ssl:/localhost|127\.0\.0\.1/.test(DBURL)?false:{rejectUnauthorized:false},max:4});
+  await pool.query('create table if not exists kv(k text primary key,v text not null)');
+  await pool.query('create table if not exists files(name text primary key,mime text,data bytea not null,t bigint)');
+  const r=await pool.query("select v from kv where k='data'");if(r.rows[0])PRE=r.rows[0].v;
+  console.log('Database ON'+(PRE?' (data loaded)':' (empty, starting fresh/file)'))}
+ main()})().catch(e=>{console.error('Start failed:',e.message);process.exit(1)});
+function main(){
 const app=express(),srv=http.createServer(app),io=new Server(srv);
 const F=process.env.DATA_FILE||path.join(__dirname,'data.json');
 const UP=process.env.UPLOAD_DIR||path.join(__dirname,'uploads');fs.mkdirSync(UP,{recursive:true});
-let D={users:[],posts:[],fr:[],rq:[],msgs:[],tok:{},bl:[],mt:[],nt:[],rp:[],cfg:{},pages:[],pf:[],ps:[]};
-try{D=Object.assign(D,JSON.parse(fs.readFileSync(F,'utf8')))}catch(e){}
+let D={users:[],posts:[],fr:[],rq:[],msgs:[],tok:{},bl:[],mt:[],nt:[],rp:[],cfg:{},pages:[],pf:[],ps:[],stories:[]};
+try{D=Object.assign(D,JSON.parse(PRE!=null?PRE:fs.readFileSync(F,'utf8')))}catch(e){}
 D.posts.forEach(p=>{if(!p.rx){p.rx={};(p.likes||[]).forEach(u=>p.rx[u]='like');delete p.likes}});
-let st;const save=()=>{clearTimeout(st);st=setTimeout(()=>fs.writeFile(F,JSON.stringify(D),()=>{}),300)};
+let st,chain=Promise.resolve();
+const wr=()=>chain=chain.then(()=>pool?pool.query("insert into kv(k,v) values('data',$1) on conflict(k) do update set v=excluded.v",[JSON.stringify(D)]).catch(e=>console.log('DB save fail:',e.message)):new Promise(res=>fs.writeFile(F,JSON.stringify(D),()=>res())));
+const save=()=>{clearTimeout(st);st=setTimeout(wr,pool?1200:300)};
+process.on('SIGTERM',()=>{clearTimeout(st);wr().then(()=>process.exit(0))});
+const MIME={mp4:'video/mp4',webm:'video/webm',mov:'video/quicktime',jpg:'image/jpeg'};
+function putFile(n,buf,cb){fs.writeFile(path.join(UP,n),buf,e=>{if(e)return cb(e);if(!pool)return cb();
+ pool.query('insert into files(name,mime,data,t) values($1,$2,$3,$4) on conflict(name) do nothing',[n,MIME[n.split('.').pop()],buf,Date.now()]).then(()=>cb(),er=>{console.log('DB file fail:',er.message);cb(er)})})}
 const ADM=(process.env.ADMIN_NAME||'').trim().toLowerCase(),MAX=()=>D.cfg.max||+process.env.MAX_USERS||10;
 let lu=0;let wp=null;try{wp=require('web-push')}catch(e){}
 const VP={};
@@ -13,6 +28,7 @@ function initPush(){if(!wp)return;let pu=process.env.VAPID_PUBLIC,pr=process.env
  if(!(pu&&pr)){D.cfg.vapid=D.cfg.vapid||wp.generateVAPIDKeys();pu=D.cfg.vapid.publicKey;pr=D.cfg.vapid.privateKey;save()}
  try{wp.setVapidDetails(process.env.VAPID_SUBJECT||'mailto:bondhu@users.noreply.github.com',pu,pr);VP.pub=pu}catch(e){console.log('Push off:',e.message);wp=null}}
 initPush();
+const SD=864e5;
 const SEED=[['BBC News বাংলা','https://feeds.bbci.co.uk/bengali/rss.xml'],['Prothom Alo','https://www.prothomalo.com/feed'],['The Daily Star','https://www.thedailystar.net/frontpage/rss.xml'],['Dhaka Tribune','https://www.dhakatribune.com/feed']];
 const uid=()=>{let i=Date.now()*1000+(Math.random()*1000|0);if(i<=lu)i=lu+1;return lu=i};
 if(!D.cfg.seeded){SEED.forEach(([name,rss])=>D.pages.push({id:uid(),name,rss,ver:1}));D.cfg.seeded=1;save()}
@@ -30,9 +46,9 @@ function pushTo(to,pl){if(!wp)return;const b=JSON.stringify(pl);D.ps.filter(x=>x
 const nameOf=id=>(D.users.find(u=>u.id==id)||{name:'Keu ekjon'}).name;
 function notify(to,ty,f,tx,pid){if(to==f||!D.users.some(u=>u.id==to))return;if(D.nt.some(n=>n.to==to&&n.ty==ty&&n.f==f&&n.pid==pid&&!n.r))return;
  D.nt.push({id:uid(),to,ty,f,tx,pid,t:Date.now(),r:0});if(D.nt.length>1000)D.nt.splice(0,D.nt.length-1000);ping(to);pushTo(to,{title:'Bondhu',body:nameOf(f)+' '+tx,tag:ty+':'+f})}
-const unf=u=>{if(u)fs.unlink(path.join(UP,path.basename(u)),()=>{})};
+const unf=u=>{if(u){const n=path.basename(u);fs.unlink(path.join(UP,n),()=>{});if(pool)pool.query('delete from files where name=$1',[n]).catch(()=>{})}};
 const unl=p=>unf(p.vid),unm=a=>a.forEach(x=>x.m&&unf(x.m.u));
-function rmUser(id){D.posts.filter(p=>p.uid==id).forEach(unl);unf((D.users.find(u=>u.id==id)||{}).pic);unm(D.msgs.filter(x=>x.a==id||x.b==id));D.posts=D.posts.filter(p=>p.uid!=id);
+function rmUser(id){D.stories.filter(s=>s.u==id).forEach(s=>unf(s.url));D.stories=D.stories.filter(s=>s.u!=id);D.posts.filter(p=>p.uid==id).forEach(unl);unf((D.users.find(u=>u.id==id)||{}).pic);unm(D.msgs.filter(x=>x.a==id||x.b==id));D.posts=D.posts.filter(p=>p.uid!=id);
  D.posts.forEach(p=>{delete p.rx[id];p.c=p.c.filter(c=>c.uid!=id);p.tags=(p.tags||[]).filter(i=>i!=id);p.allow=(p.allow||[]).filter(i=>i!=id)});
  D.users=D.users.filter(u=>u.id!=id);D.fr=D.fr.filter(f=>!f.includes(id));D.rq=D.rq.filter(x=>x.from!=id&&x.to!=id);
  D.msgs=D.msgs.filter(x=>x.a!=id&&x.b!=id);D.mt=D.mt.filter(t=>t.a!=id&&t.b!=id);D.bl=D.bl.filter(x=>x.by!=id&&x.t!=id);
@@ -44,7 +60,9 @@ function rmPost(p){unl(p);D.posts=D.posts.filter(x=>x!==p);D.rp=D.rp.filter(r=>!
 
 app.use(express.json({limit:'4mb'}));
 app.use(express.static(path.join(__dirname,'public')));
-app.use('/uploads',express.static(UP));
+app.use('/uploads',express.static(UP,{maxAge:'30d'}));
+app.get('/uploads/:n',(q,r)=>{const n=path.basename(q.params.n);if(!pool||!/^[a-f0-9]{24}\.(mp4|webm|mov|jpg)$/.test(n))return r.sendStatus(404);
+ pool.query('select data from files where name=$1',[n]).then(x=>{if(!x.rows[0])return r.sendStatus(404);const f=path.join(UP,n);fs.writeFile(f,x.rows[0].data,e=>e?r.sendStatus(500):r.sendFile(f))}).catch(()=>r.sendStatus(500))});
 const auth=(q,r,n)=>{const id=D.tok[(q.headers.authorization||'').slice(7)],u=D.users.find(u=>u.id==id);
  if(!u||u.ban)return r.status(401).json({e:'Login koro'});q.me=id;q.u=u;n()};
 const adm=(q,r,n)=>auth(q,r,()=>q.u.admin?n():r.status(403).json({e:'Admin na'}));
@@ -70,7 +88,8 @@ app.get('/api/state',auth,(q,r)=>{const m=q.me,A=q.u.admin;
  mut:Object.fromEntries(D.users.filter(u=>u.id!=m).map(u=>[u.id,D.fr.filter(f=>f.includes(m)).map(f=>f[0]==m?f[1]:f[0]).filter(x=>x!=u.id&&isF(x,u.id)).length])),
  trash:D.posts.filter(p=>p.uid==m&&p.del).sort((a,b)=>a.del-b.del).slice(-100),
  fr:D.fr.filter(f=>f.includes(m)),rq:D.rq.filter(x=>x.from==m||x.to==m),
- msgs:D.msgs.filter(x=>(x.a==m||x.b==m)&&!blocked(x.a,x.b)).slice(-500),
+ msgs:D.msgs.filter(x=>(x.a==m||x.b==m)&&!blocked(x.a,x.b)&&!(x.hd||[]).includes(m)).slice(-500),
+ stories:D.stories.filter(s=>Date.now()-s.t<SD&&!blocked(m,s.u)&&(s.u==m||(isF(m,s.u)&&!ub(s.u)))).map(s=>s.u==m?s:{id:s.id,u:s.u,url:s.url,k:s.k,cap:s.cap,t:s.t}),
  bl:D.bl.filter(x=>x.by==m).map(x=>x.t),mt:D.mt.filter(t=>t.a==m||t.b==m),
  nt:D.nt.filter(n=>n.to==m&&!blocked(m,n.f)).slice(-40).reverse(),online:[...on.keys()],my:{em:q.u.em||'',ph:q.u.ph||''},vc:{em:mailOn()||devOtp(),ph:smsOn()||devOtp()}})});
 
@@ -90,10 +109,10 @@ app.post('/api/post/:id/restore',auth,(q,r)=>{const p=D.posts.find(x=>x.id==q.pa
 app.post('/api/post/:id/purge',auth,(q,r)=>{const p=D.posts.find(x=>x.id==q.params.id);
  if(p&&p.uid==q.me&&p.del)rmPost(p);r.json({ok:1})});
 app.post('/api/trash/empty',auth,(q,r)=>{D.posts.filter(p=>p.uid==q.me&&p.del).forEach(rmPost);r.json({ok:1})});
-app.post('/api/upload',auth,express.raw({type:Object.keys(MT),limit:'40mb'}),(q,r)=>{
- const ext=MT[q.headers['content-type']];if(!ext||!Buffer.isBuffer(q.body)||!q.body.length)return r.status(400).json({e:'Shudhu photo ba mp4/webm/mov video dao (40MB porjonto)'});
+app.post('/api/upload',auth,express.raw({type:Object.keys(MT),limit:'80mb'}),(q,r)=>{
+ const ext=MT[q.headers['content-type']];if(!ext||!Buffer.isBuffer(q.body)||!q.body.length)return r.status(400).json({e:'Shudhu photo ba mp4/webm/mov video dao (80MB porjonto)'});
  const n=crypto.randomBytes(12).toString('hex')+'.'+ext;
- fs.writeFile(path.join(UP,n),q.body,e=>e?r.status(500).json({e:'Save hoyni'}):r.json({url:'/uploads/'+n}))});
+ putFile(n,q.body,e=>e?r.status(500).json({e:'Save hoyni'}):r.json({url:'/uploads/'+n}))});
 app.post('/api/react/:id/:k',auth,(q,r)=>{const p=D.posts.find(x=>x.id==q.params.id),k=q.params.k;
  if(p&&!p.del&&RXK.includes(k)&&canSee(p,q.me)&&!blocked(q.me,p.uid)){if(p.rx[q.me]==k)delete p.rx[q.me];else{p.rx[q.me]=k;notify(p.uid,'rx',q.me,'tomar post e react korechhe',p.id)}save();io.emit('sync')}r.json({ok:1})});
 app.post('/api/comment/:id',auth,(q,r)=>{const p=D.posts.find(x=>x.id==q.params.id),text=String(q.body.text||'').slice(0,500);
@@ -129,7 +148,7 @@ app.post('/api/block/:id/:v',auth,(q,r)=>{const m=q.me,o=+q.params.id;
 app.post('/api/profile/pic',auth,express.raw({type:'image/jpeg',limit:'1mb'}),(q,r)=>{
  if(!Buffer.isBuffer(q.body)||!q.body.length)return r.status(400).json({e:'Shudhu jpeg photo dao'});
  const n=crypto.randomBytes(12).toString('hex')+'.jpg';
- fs.writeFile(path.join(UP,n),q.body,e=>{if(e)return r.status(500).json({e:'Save hoyni'});unf(q.u.pic);q.u.pic='/uploads/'+n;save();io.emit('sync');r.json({ok:1})})});
+ putFile(n,q.body,e=>{if(e)return r.status(500).json({e:'Save hoyni'});unf(q.u.pic);q.u.pic='/uploads/'+n;save();io.emit('sync');r.json({ok:1})})});
 app.post('/api/profile/pic/del',auth,(q,r)=>{unf(q.u.pic);delete q.u.pic;save();io.emit('sync');r.json({ok:1})});
 app.post('/api/report',auth,(q,r)=>{const type=q.body.type=='user'?'user':'post',tid=+q.body.id,reason=String(q.body.reason||'').trim().slice(0,300);
  const ok=type=='post'?D.posts.some(p=>p.id==tid&&!p.del&&canSee(p,q.me)):D.users.some(u=>u.id==tid&&u.id!=q.me);
@@ -195,6 +214,50 @@ app.post('/api/verify/confirm',auth,(q,r)=>{const o=OTP.get(q.me),c=String(q.bod
 app.post('/api/verify/remove',auth,(q,r)=>{if(q.u.h!=hash(String(q.body.pw||''),q.u.salt))return r.status(400).json({e:'Password vul'});
  delete q.u[q.body.type=='phone'?'ph':'em'];if(q.u.em||q.u.ph)q.u.vf=1;else delete q.u.vf;save();io.emit('sync');r.json({ok:1})});
 
+
+/* ---- Stories (24h), message delete/react, link preview ---- */
+const inUse=(url,ex)=>D.posts.some(p=>p.vid==url)||D.msgs.some(x=>x.m&&x.m.u==url)||D.users.some(u=>u.pic==url)||D.stories.some(s=>s!==ex&&s.url==url);
+function rmStory(s){D.stories=D.stories.filter(x=>x!==s);if(!inUse(s.url,s))unf(s.url)}
+function purgeStories(){const old=D.stories.filter(s=>Date.now()-s.t>=SD);if(old.length){old.forEach(rmStory);save();io.emit('sync')}}
+purgeStories();setInterval(purgeStories,6e5).unref();
+app.post('/api/story',auth,(q,r)=>{const mu=String((q.body.m||{}).url||''),cap=String(q.body.cap||'').trim().slice(0,200);
+ if(!MEDIA.test(mu))return r.status(400).json({e:'Photo ba video dao'});
+ if(D.stories.filter(s=>s.u==q.me).length>=20)return r.status(400).json({e:'Ek diner moddhe max 20 ta story'});
+ D.stories.push({id:uid(),u:q.me,url:mu,k:mu.endsWith('.jpg')?'img':'vid',cap,t:Date.now(),v:[]});save();io.emit('sync');r.json({ok:1})});
+app.post('/api/story/:id/del',auth,(q,r)=>{const s=D.stories.find(x=>x.id==q.params.id);if(s&&(s.u==q.me||q.u.admin)){rmStory(s);save();io.emit('sync')}r.json({ok:1})});
+app.post('/api/story/:id/seen',auth,(q,r)=>{const s=D.stories.find(x=>x.id==q.params.id);
+ if(s&&s.u!=q.me&&isF(q.me,s.u)&&!blocked(q.me,s.u)&&!s.v.includes(q.me)){s.v.push(q.me);save();ping(s.u)}r.json({ok:1})});
+const MRX=['love','like','dislike'];
+app.post('/api/m/:mid/del',auth,(q,r)=>{const x=D.msgs.find(y=>y.id==q.params.mid);
+ if(x&&(x.a==q.me||x.b==q.me)){if(x.a==q.me){D.msgs=D.msgs.filter(y=>y!==x);if(x.m&&!inUse(x.m.u))unf(x.m.u)}else{x.hd=x.hd||[];if(!x.hd.includes(q.me))x.hd.push(q.me)}save();ping(x.a,x.b)}r.json({ok:1})});
+app.post('/api/m/:mid/react/:k',auth,(q,r)=>{const x=D.msgs.find(y=>y.id==q.params.mid),k=q.params.k;
+ if(x&&(x.a==q.me||x.b==q.me)&&MRX.includes(k)&&!blocked(x.a,x.b)){x.rx=x.rx||{};if(x.rx[q.me]==k)delete x.rx[q.me];else x.rx[q.me]=k;save();ping(x.a,x.b)}r.json({ok:1})});
+
+const privIp=ip=>{if(net.isIPv6(ip)){const l=ip.toLowerCase();if(l=='::1'||l=='::'||/^f[cd]/.test(l)||/^fe[89ab]/.test(l))return true;const m=l.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);return m?privIp(m[1]):false}
+ const p=ip.split('.').map(Number);return p[0]==10||p[0]==127||p[0]==0||(p[0]==169&&p[1]==254)||(p[0]==172&&p[1]>=16&&p[1]<=31)||(p[0]==192&&p[1]==168)||(p[0]==100&&p[1]>=64&&p[1]<=127)||p[0]>=224};
+function safeLookup(host,o,cb){dns.lookup(host,{all:true},(e,a)=>{if(e)return cb(e);const ok=a.filter(x=>!privIp(x.address));if(!ok.length)return cb(new Error('blocked'));if(o&&o.all)return cb(null,ok);cb(null,ok[0].address,ok[0].family)})}
+function getHtml(u,hop,done){let x;try{x=new URL(u)}catch(e){return done(new Error('url'))}
+ if(!/^https?:$/.test(x.protocol)||(net.isIP(x.hostname.replace(/^\[|\]$/g,''))&&privIp(x.hostname.replace(/^\[|\]$/g,''))))return done(new Error('blocked'));
+ const lib=x.protocol=='https:'?https:http;let fin=false;const end=(e,v)=>{if(!fin){fin=true;done(e,v)}};
+ const rq=lib.get(x,{lookup:safeLookup,timeout:6000,headers:{'User-Agent':'Mozilla/5.0 (compatible; BondhuLinkPreview/1.0)','Accept':'text/html,application/xhtml+xml','Accept-Language':'en,bn;q=0.8','Accept-Encoding':'gzip, deflate'}},res=>{
+  if(res.statusCode>=300&&res.statusCode<400&&res.headers.location){res.resume();if(hop>=3)return end(new Error('redirects'));return getHtml(new URL(res.headers.location,x).href,hop+1,end)}
+  if(res.statusCode!=200||!/html/i.test(res.headers['content-type']||'')){res.resume();return end(new Error('type'))}
+  let src=res;const ce=res.headers['content-encoding'];if(ce=='gzip')src=res.pipe(zlib.createGunzip());else if(ce=='deflate')src=res.pipe(zlib.createInflate());
+  const ch=[];let n=0;src.on('data',c=>{n+=c.length;ch.push(c);if(n>6e5){rq.destroy();end(null,{h:Buffer.concat(ch).toString('utf8'),u:x.href})}});
+  src.on('end',()=>end(null,{h:Buffer.concat(ch).toString('utf8'),u:x.href}));src.on('error',end)});
+ rq.on('timeout',()=>{rq.destroy();end(new Error('timeout'))});rq.on('error',end)}
+const hdec=t=>String(t||'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#0?39;|&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(+n)).trim();
+function parseMeta(h,base){const M={};(h.match(/<meta\b[^>]*>/gi)||[]).forEach(t=>{const a={};t.replace(/([a-zA-Z:_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g,(_,k,v1,v2)=>{a[k.toLowerCase()]=v1!==undefined?v1:v2});const k=(a.property||a.name||'').toLowerCase();if(k&&a.content!==undefined&&!M[k])M[k]=hdec(a.content)});
+ const ti=(h.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1];let img=M['og:image']||M['og:image:url']||M['twitter:image']||M['twitter:image:src']||'';
+ try{img=img?new URL(img,base).href:''}catch(e){img=''}if(!/^https?:\/\//.test(img))img='';
+ return{title:(M['og:title']||M['twitter:title']||hdec(ti)).slice(0,160),desc:(M['og:description']||M['twitter:description']||M.description||'').slice(0,240),img,site:(M['og:site_name']||new URL(base).hostname.replace(/^www\./,'')).slice(0,60)}}
+const PV=new Map();
+app.get('/api/preview',auth,(q,r)=>{const u=String(q.query.url||'').slice(0,500);if(!/^https?:\/\//i.test(u))return r.status(400).json({e:'url'});
+ if(!hit('pv'+q.me,40,6e4))return r.status(429).json({e:'slow'});
+ const c=PV.get(u);if(c&&Date.now()-c.t<(c.v?36e5:6e5))return r.json(c.v||{});
+ getHtml(u,0,(e,x)=>{let v=null;if(!e){try{v=parseMeta(x.h,x.u);if(!v.title&&!v.img)v=null}catch(_){v=null}}
+  PV.set(u,{t:Date.now(),v});if(PV.size>300)PV.delete(PV.keys().next().value);r.json(v||{})})});
+
 /* ---- ICE (call relay), push, pages ---- */
 let iceC=null,iceErr='';
 async function ice(){const base=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
@@ -258,7 +321,7 @@ app.post('/api/admin/pg/:id/post',adm,(q,r)=>{const g=D.pages.find(x=>x.id==q.pa
 app.get('/api/admin/backup',adm,(q,r)=>{r.setHeader('Content-Type','application/json');r.setHeader('Content-Disposition','attachment; filename="bondhu-backup.json"');r.send(JSON.stringify(D))});
 app.post('/api/admin/restore',adm,express.text({type:'text/plain',limit:'100mb'}),(q,r)=>{let j;try{j=JSON.parse(q.body)}catch(e){}
  if(!j||!Array.isArray(j.users)||!Array.isArray(j.posts))return r.status(400).json({e:'Eta valid backup file na'});
- const n=Object.assign({users:[],posts:[],fr:[],rq:[],msgs:[],tok:{},bl:[],mt:[],nt:[],rp:[],cfg:{},pages:[],pf:[],ps:[]},j);
+ const n=Object.assign({users:[],posts:[],fr:[],rq:[],msgs:[],tok:{},bl:[],mt:[],nt:[],rp:[],cfg:{},pages:[],pf:[],ps:[],stories:[]},j);
  Object.keys(D).forEach(k=>delete D[k]);Object.assign(D,n);iceC=null;initPush();save();io.emit('sync');r.json({ok:1})});
 
 io.use((s,n)=>{const id=D.tok[s.handshake.auth.token],u=D.users.find(x=>x.id==id);if(!u||u.ban)return n(new Error('auth'));s.uid=id;n()});
@@ -272,3 +335,4 @@ io.on('connection',s=>{s.join('u'+s.uid);on.set(s.uid,(on.get(s.uid)||0)+1);io.e
   else{const p=pend.get(to);if(p&&p.from==s.uid){if(data.t=='bye')pend.delete(to);else if(p.m.length<60)p.m.push(data)}}});
  s.on('disconnect',()=>{const c=(on.get(s.uid)||1)-1;c?on.set(s.uid,c):on.delete(s.uid);io.emit('sync')})});
 srv.listen(process.env.PORT||3000,()=>console.log('Bondhu running'));
+}
